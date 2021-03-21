@@ -18,43 +18,24 @@
     "cs": "./node_modules/.bin/sequelize seed:generate --name"
   },
   "dependencies": {
-    "@types/speakeasy": "^2.0.5",
     "aws-sdk": "^2.670.0",
     "axios": "^0.21.1",
-    "bcryptjs": "^2.4.3",
     "config": "^3.1.0",
-    "date-fns": "^2.9.0",
     "eslint-config-prettier": "^8.1.0",
     "eslint-plugin-prettier": "^3.3.1",
-    "flat": "^5.0.0",
-    "generate-password": "^1.5.1",
     "inversify": "^5.0.1",
     "joi": "^14.3.1",
-    "joi-password-complexity": "2.0.1",
-    "json-stringify-pretty-compact": "^2.0.0",
-    "jsonwebtoken": "^8.5.1",
-    "libphonenumber-js": "^1.9.8",
-    "lodash": "^4.17.15",
-    "moment": "^2.24.0",
-    "moment-timezone": "^0.5.28",
-    "papaparse": "^5.2.0",
     "pg": "^7.11.0",
-    "phone": "^2.4.13",
-    "randomstring": "^1.1.5",
     "reflect-metadata": "^0.1.13",
-    "secure-random-password": "^0.2.2",
     "sequelize": "^5.21.3",
-    "speakeasy": "^2.0.0",
-    "unidecode": "^0.1.8",
-    "uuid": "^7.0.2",
-    "winston": "^3.2.1"
+    "speakeasy": "^2.0.0"
   },
   "devDependencies": {
+    "@types/speakeasy": "^2.0.5",
     "@types/aws-lambda": "^8.10.31",
     "@types/config": "0.0.34",
     "@types/jest": "^24.0.12",
     "@types/joi": "^14.3.3",
-    "@types/jsonwebtoken": "^8.3.2",
     "@types/sequelize": "^4.27.49",
     "@types/umzug": "^2.2.1",
     "@typescript-eslint/eslint-plugin": "^4.18.0",
@@ -65,24 +46,12 @@
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-promise": "^4.3.1",
     "eslint-plugin-standard": "^5.0.0",
-    "husky": "^3.0.1",
     "jest": "^24.8.0",
-    "lint-staged": "^9.2.0",
-    "moxios": "^0.4.0",
-    "nock": "^11.4.0",
     "prettier": "^1.18.2",
-    "pretty-quick": "^1.8.0",
     "sequelize-cli": "^5.5.0",
     "ts-jest": "^26.5.4",
     "ts-node": "^8.1.0",
     "typescript": "^3.7.5",
     "umzug": "^2.2.0"
-  },
-  "lint-staged": {
-    "**/*.{js,ts}": [
-      "npm run format",
-      "npm run lint:fix",
-      "git add"
-    ]
   }
 }
