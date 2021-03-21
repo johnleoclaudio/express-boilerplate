@@ -1,0 +1,17 @@
+# package directories
+node_modules
+jspm_packages
+umzug.json
+
+config/development.json
+config/test.json
+config/test.js
+config/sample_img.jpeg
+
+dist
+
+# Serverless directories
+.serverless
+.idea/
+.DS_Store
+*.log

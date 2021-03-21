@@ -1,0 +1,89 @@
+{
+  "name": "express-boilerplate",
+  "version": "1.0.0",
+  "description": "Express, Typescript, Inversify, Postgres",
+  "author": "Leo Claudio",
+  "license": "ISC",
+  "main": "index.js",
+  "scripts": {
+    "test": "NODE_ENV=test && node --max-old-space-size=4096 ./node_modules/.bin/jest --runInBand --detectOpenHandles --force-exit",
+    "migrate": "./node_modules/.bin/sequelize db:migrate",
+    "prettier": "prettier \"**/*.{js,ts}\"",
+    "prettier:check": "prettier --check \"**/*.{js,ts}\"",
+    "format": "npm run prettier -- --write",
+    "lint": "eslint \"**/*.{js,ts}\" ",
+    "lint:fix": "npm run lint -- --fix",
+    "validate": "npm run prettier -- --list-different && npm run lint",
+    "cm": "./node_modules/.bin/sequelize migration:generate --name",
+    "cs": "./node_modules/.bin/sequelize seed:generate --name"
+  },
+  "dependencies": {
+    "@types/speakeasy": "^2.0.5",
+    "aws-sdk": "^2.670.0",
+    "axios": "^0.19.2",
+    "bcryptjs": "^2.4.3",
+    "config": "^3.1.0",
+    "date-fns": "^2.9.0",
+    "flat": "^5.0.0",
+    "generate-password": "^1.5.1",
+    "inversify": "^5.0.1",
+    "joi": "^14.3.1",
+    "joi-password-complexity": "2.0.1",
+    "json-stringify-pretty-compact": "^2.0.0",
+    "jsonwebtoken": "^8.5.1",
+    "libphonenumber-js": "^1.9.8",
+    "lodash": "^4.17.15",
+    "moment": "^2.24.0",
+    "moment-timezone": "^0.5.28",
+    "papaparse": "^5.2.0",
+    "pg": "^7.11.0",
+    "phone": "^2.4.13",
+    "randomstring": "^1.1.5",
+    "reflect-metadata": "^0.1.13",
+    "secure-random-password": "^0.2.2",
+    "sequelize": "^5.21.3",
+    "speakeasy": "^2.0.0",
+    "unidecode": "^0.1.8",
+    "uuid": "^7.0.2",
+    "winston": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.31",
+    "@types/config": "0.0.34",
+    "@types/jest": "^24.0.12",
+    "@types/joi": "^14.3.3",
+    "@types/jsonwebtoken": "^8.3.2",
+    "@types/sequelize": "^4.27.49",
+    "@types/umzug": "^2.2.1",
+    "@typescript-eslint/eslint-plugin": "^1.13.0",
+    "eslint": "^5.16.0",
+    "eslint-config-airbnb-base": "^13.1.0",
+    "eslint-config-airbnb-typescript": "^4.0.1",
+    "eslint-config-prettier": "^6.0.0",
+    "eslint-plugin-import": "^2.18.2",
+    "husky": "^3.0.1",
+    "jest": "^24.8.0",
+    "lint-staged": "^9.2.0",
+    "moxios": "^0.4.0",
+    "nock": "^11.4.0",
+    "prettier": "^1.18.2",
+    "pretty-quick": "^1.8.0",
+    "sequelize-cli": "^5.5.0",
+    "ts-jest": "^24.0.2",
+    "ts-node": "^8.1.0",
+    "typescript": "^3.7.5",
+    "umzug": "^2.2.0"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "pretty-quick --staged"
+    }
+  },
+  "lint-staged": {
+    "**/*.{js,ts}": [
+      "npm run format",
+      "npm run lint:fix",
+      "git add"
+    ]
+  }
+}

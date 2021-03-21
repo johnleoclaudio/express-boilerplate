@@ -1,0 +1,74 @@
+application: {{
+    layerPathFromLambda: '/opt/dist', 
+    salt: 1,
+    refreshDuration: 2,
+    sessionDuration: 2,
+    bondSessionDuration: 1,
+    emailVerificationDuration: 24,
+    jwtSecret: '{jwtSecret}',
+    privateKey: `{privateKey}`,
+    publicKey: `{publicKey}`,
+    passphrase: '{passphrase}',
+    smsApiKey: '{smsApiKey}',
+    smsApiSecret: '{smsApiSecret}',
+    localSmsApiKey: '{localSmsApiKey}',
+    smsOtpDuration: 2,
+    emailRetry: 10,
+    loginRetry: 5,
+    otpRetry: 5,
+    otpRequest: 5,
+    pixoSessionDuration: 1,
+    pixoRefreshSessionDuration: 1,
+    accessTokenGraceSeconds: 60,
+    twoFaWindow: 1,
+    adminPasswordExpiryInDays: 90,
+    adminInactiveLockInDays: 30,
+  }},
+exchange: {{
+    baseUrl: '{exchangeBaseUrl}',
+    endpoints: {{
+      login: '{exchangeLoginEndPoint}',
+    }}
+  }},
+anxone: {{
+    baseUrl: '{anxoneBaseUrl}',
+    endpoints: {{
+        login: '{anxoneLoginEndpoint}',
+    }},
+    apiId: '',
+    secretKey: '',
+  }},
+nexmo: {{
+    baseUrl: 'https://rest.nexmo.com',
+    endpoints: {{
+        sms: '/sms/json',
+    }},
+  }},
+semaphore: {{
+    baseUrl: 'https://api.semaphore.co',
+    endpoints: {{
+        sms: '/api/v4/messages',
+    }},
+  }},
+notificationService: {{
+  baseUrl: 'https://api.trade.pdax.ph/notification',
+  bondBaseUrl: '{notificationBaseUrl}',
+  endpoints: {{
+    email: '/send-email',
+    bulkEmail: '/email-templates/send-multiple',
+  }}
+}},
+premyo: {{
+  baseUrl: '{premyoBaseUrl}',
+  bondSecret: 'B/zJA+MqUN-gap9-T+=k43_q4f^#cd+?24dn/u3u23Cp;U>',
+  endpoints: {{
+    verify: '/verify',
+    bondSubscribers: '/admin/bond/subscribers',
+  }},
+}}, 
+redirBonds: {{
+  baseUrl: '{redirBondsBaseUrl}',
+  endpoints: {{
+    verify: '/verify',
+  }},
+}}, 

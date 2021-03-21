@@ -1,0 +1,14 @@
+  database: {{
+    username: '{username}',
+    port: {port},
+    database: '{database}',
+    password: '{password}',
+    host: '{host}',
+    dialect: 'postgres',
+    pool: {{
+      max: 5,
+      min: 0,
+      acquire: 120000,
+      idle: 10000,
+    }},
+  }},

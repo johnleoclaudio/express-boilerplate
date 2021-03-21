@@ -1,0 +1,1216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'PDAX Auth Service'
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - Stage
+      - Prod
+      - Dev
+    Default: Dev
+    Description: Stage that can be added to resource names
+
+  ProjectName:
+    Default: anxone
+    Type: String
+    Description: Name of the project that these functions are for
+
+  ServiceName:
+    Default: pdaxauth
+    Type: String
+    Description: Name of the service that these functions are for
+
+  SessionDuration:
+    Default: 2
+    Type: Number
+    MinValue: 1
+    MaxValue: 24
+    Description: Session duration in hours
+
+  BuildArtifactsBucket:
+    Type: String
+    Description: Location of build artifacts in S3
+
+Mappings:
+  AnxoneBaseUrl:
+    Dev:
+      URL: https://uatpdax.digitalmarkets.trade
+    Stage:
+      URL: https://uatpdax.digitalmarkets.trade
+    Prod:
+      URL: https://trade.pdax.ph
+  ExchangeBaseUrl:
+    Dev:
+      URL: https://api-dev.trade.pdax.ph/exchange
+    Stage:
+      URL: https://api-stage.trade.pdax.ph/exchange
+    Prod:
+      URL: https://api.trade.pdax.ph/exchange
+
+Conditions:
+  ProductionEnvironment: !Equals [!Ref Stage, Prod]
+  StagingEnvironment: !Equals [!Ref Stage, Stage]
+  TestingEnvironment: !Equals [!Ref Stage, Test]
+
+Globals:
+  Function:
+    MemorySize: !If [ProductionEnvironment, 512, 192]
+    Timeout: 120
+    Runtime: nodejs10.x
+    VpcConfig:
+      SubnetIds:
+        - !Select
+          - 0
+          - !Split
+            - ','
+            - Fn::ImportValue: !Sub ${ProjectName}-${Stage}-PrivateSubnets
+        - !Select
+          - 1
+          - !Split
+            - ','
+            - Fn::ImportValue: !Sub ${ProjectName}-${Stage}-PrivateSubnets
+        - !Select
+          - 2
+          - !Split
+            - ','
+            - Fn::ImportValue: !Sub ${ProjectName}-${Stage}-PrivateSubnets
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${ProjectName}-${Stage}-LambdaVpcSG
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        SERVICE_NAME: !Ref ServiceName
+        SESSION_DURATION: !Ref SessionDuration
+        NODE_CONFIG_DIR: /opt/config
+        CONTAINER_PATH: /opt/dist
+        NODE_PATH: ./:/opt/node_modules
+        NODE_ENV: !Ref Stage
+        S3_BUCKET:
+          Fn::ImportValue: !Sub ${ProjectName}-${Stage}-${AWS::Region}
+
+Resources:
+  RestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Stage}-${ServiceName}-Api'
+      StageName: Prod
+      Cors:
+        AllowHeaders: "'Content-Type,X-Requested-With,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,access_token,X-Access-Token'"
+        AllowOrigin: "'*'"
+
+  APIBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    DependsOn:
+      - RestApiProdStage
+    Properties:
+      BasePath: pdaxauth
+      DomainName:
+        Fn::ImportValue: !Sub ${ProjectName}-${Stage}-apigw-domain
+      RestApiId: !Ref RestApi
+      Stage: Prod
+
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub /${ProjectName}/services/backend/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  ServiceRolePolicies:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ServiceRolePolicies
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Action:
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+              - 's3:PutObject'
+              - 's3:CopyObject'
+            Resource:
+              - Fn::Sub:
+                  - 'arn:aws:s3:::${Bucket}/${Service}/*'
+                  - Bucket:
+                      Fn::ImportValue: !Sub ${ProjectName}-${Stage}-${AWS::Region}
+                    Service: !Ref ServiceName
+          - Effect: 'Allow'
+            Action:
+              - 's3:ListBucket'
+            Resource:
+              - Fn::Sub:
+                  - 'arn:aws:s3:::${Bucket}'
+                  - Bucket:
+                      Fn::ImportValue: !Sub ${ProjectName}-${Stage}-${AWS::Region}
+      Roles:
+        - Ref: ServiceRole
+
+  DepLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub ${ProjectName}-${Stage}-${ServiceName}-app-dependencies
+      Description: Application dependencies
+      ContentUri: ./
+      RetentionPolicy: Delete
+      CompatibleRuntimes:
+        - nodejs10.x
+
+  Login:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-LoginUser
+      Handler: index.loginUser
+      CodeUri: dist/lambdas/login-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/login
+            Method: post
+            RestApiId: !Ref RestApi
+
+  UpdatePin:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-UpdatePin
+      Handler: index.updatePin
+      CodeUri: dist/lambdas/update-pin
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/pin
+            Method: put
+            RestApiId: !Ref RestApi
+
+  UpdateClientInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-UpdateClientInfo
+      Handler: index.updateClientInfo
+      CodeUri: dist/lambdas/update-client-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client
+            Method: put
+            RestApiId: !Ref RestApi
+
+  RefreshToken:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-RefreshToken
+      Handler: index.refreshToken
+      CodeUri: dist/lambdas/refresh-token
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /token/refresh
+            Method: post
+            RestApiId: !Ref RestApi
+
+  RegisterClient:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-RegisterClient
+      Handler: index.registerClient
+      CodeUri: dist/lambdas/register-client
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client/register
+            Method: post
+            RestApiId: !Ref RestApi
+
+  LoginClient:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-LoginClient
+      Handler: index.loginClient
+      CodeUri: dist/lambdas/login-client
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client/login
+            Method: post
+            RestApiId: !Ref RestApi
+
+  GetClientInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetClientInfo
+      Handler: index.getClientInfo
+      CodeUri: dist/lambdas/get-client-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client
+            Method: get
+            RestApiId: !Ref RestApi
+
+  ValidateToken:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ValidateToken
+      Handler: index.validateToken
+      CodeUri: dist/lambdas/validate-token
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /token/verify
+            Method: post
+            RestApiId: !Ref RestApi
+
+  GenerateRandomClientPassword:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GenerateRandomClientPassword
+      Handler: index.generateRandomClientPassword
+      CodeUri: dist/lambdas/generate-random-client-password
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client/password
+            Method: post
+            RestApiId: !Ref RestApi
+
+  LoginBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-LoginBondUser
+      Handler: index.loginBondUser
+      CodeUri: dist/lambdas/login-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/login
+            Method: post
+            RestApiId: !Ref RestApi
+
+  RegisterBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-RegisterBondUser
+      Handler: index.registerBondUser
+      CodeUri: dist/lambdas/register-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/register
+            Method: post
+            RestApiId: !Ref RestApi
+
+  GetBondUserInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetBondUserInfo
+      Handler: index.getBondUserInfo
+      CodeUri: dist/lambdas/get-bond-user-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond
+            Method: get
+            RestApiId: !Ref RestApi
+
+  UpdateBondUserInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-UpdateBondUserInfo
+      Handler: index.updateBondUserInfo
+      CodeUri: dist/lambdas/update-bond-user-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond
+            Method: put
+            RestApiId: !Ref RestApi
+
+  GetAdditionalInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetAdditionalInfo
+      Handler: index.getAdditionalInfo
+      CodeUri: dist/lambdas/get-additional-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/{scope}/{type}
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  UpdateAdditionalInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-UpdateAdditionalInfo
+      Handler: index.updateAdditionalInfo
+      CodeUri: dist/lambdas/update-additional-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/{scope}/{type}
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  ChangePassword:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ChangePassword
+      Handler: index.changePassword
+      CodeUri: dist/lambdas/change-password
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /client/change-password
+            Method: post
+            RestApiId: !Ref RestApi
+
+  CreateOtp:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CreateOtp
+      Handler: index.createOtp
+      CodeUri: dist/lambdas/create-otp
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/otp/create
+            Method: post
+            RestApiId: !Ref RestApi
+
+  CheckOtp:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CheckOtp
+      Handler: index.checkOtp
+      CodeUri: dist/lambdas/check-otp
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/otp/check
+            Method: post
+            RestApiId: !Ref RestApi
+
+  VerifyAccount:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-VerifyAccount
+      Handler: index.verify
+      CodeUri: dist/lambdas/verify-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /verify
+            Method: post
+            RestApiId: !Ref RestApi
+
+  ChangePinBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ChangePinBondUser
+      Handler: index.changePinBondUser
+      CodeUri: dist/lambdas/change-pin-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/change-pin
+            Method: post
+            RestApiId: !Ref RestApi
+
+  ForgotPinBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ForgotPinBondUser
+      Handler: index.forgotPinBondUser
+      CodeUri: dist/lambdas/forgot-pin-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/forgot-pin
+            Method: post
+            RestApiId: !Ref RestApi
+
+  CreateNewPinBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CreateNewPinBondUser
+      Handler: index.createNewPinBondUser
+      CodeUri: dist/lambdas/create-new-pin-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/new-pin
+            Method: post
+            RestApiId: !Ref RestApi
+
+  CheckOtpForgotPinBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CheckOtpForgotPinBondUser
+      Handler: index.checkOtpForgotPinBondUser
+      CodeUri: dist/lambdas/check-otp-forgot-pin
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/otp/check-forgot-pin
+            Method: post
+            RestApiId: !Ref RestApi
+
+  GeneratePresignedUrl:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GeneratePresignedUrl
+      Handler: index.generatePresignedUrl
+      CodeUri: dist/lambdas/generate-presigned-url
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /upload/url/generate
+            Method: post
+            RestApiId: !Ref RestApi
+
+  LoginAdmin:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-LoginAdmin
+      Handler: index.loginAdmin
+      CodeUri: dist/lambdas/login-admin
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /admin/{scope}/login
+            Method: post
+            RestApiId: !Ref RestApi
+
+  # TODO: Do not expose this API in gateway for others
+  RegisterAdmin:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-RegisterAdmin
+      Handler: index.registerAdmin
+      CodeUri: dist/lambdas/register-admin
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /admin/register
+            Method: post
+            RestApiId: !Ref RestApi
+
+  ChangePasswordAdmin:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ChangePasswordAdmin
+      Handler: index.changePasswordAdmin
+      CodeUri: dist/lambdas/change-password-admin
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/change-password
+            Method: post
+            RestApiId: !Ref RestApi
+
+  CheckToken:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CheckToken
+      Handler: index.checkToken
+      CodeUri: dist/lambdas/check-token
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/{role}/check
+            Method: post
+            RestApiId: !Ref RestApi
+
+  # Rename this for future use maybe
+  GetAdminInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetAdminInfo
+      Handler: index.getAdminInfo
+      CodeUri: dist/lambdas/get-admin-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/info
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  ApproveKyc:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ApproveKyc
+      Handler: index.approveKyc
+      CodeUri: dist/lambdas/approve-kyc
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/kyc/approve
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  GetBondUsers:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetBondUsers
+      Handler: index.getBondUsers
+      CodeUri: dist/lambdas/get-bond-users
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/users
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  GetBondUserAccountInfo:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetBondUserAccountInfo
+      Handler: index.getBondUserAccountInfo
+      CodeUri: dist/lambdas/get-bond-user-account-info
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/user-account-info
+            Method: get
+            RestApiId: !Ref RestApi
+
+  ToggleBondUserAccess:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-ToggleBondUserAccess
+      Handler: index.toggleBondUserAccess
+      CodeUri: dist/lambdas/toggle-bond-user-access
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/user/access
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  RetryKyc:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-RetryKyc
+      Handler: index.retryKyc
+      CodeUri: dist/lambdas/retry-kyc
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/kyc/retry
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  GenerateAllUsersAccountInfoReport:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GenerateAllUsersAccountInfoReport
+      Handler: index.generateAllUsersAccountInfoReport
+      CodeUri: dist/lambdas/generate-all-users-account-info-report
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/report/users
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  BatchGenerateUsersInfoReport:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-BatchGenerateUsersInfoReport
+      Handler: index.batchGenerateUsersInfoReport
+      CodeUri: dist/lambdas/batch-generate-users-info-report
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        BfsBatcherCron1:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 0 * * ? *)
+        BfsBatcherCron2:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 3 * * ? *)
+        BfsBatcherCron3:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 6 * * ? *)
+
+  GenerateInvestorInformationReport:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GenerateInvestorInformationReport
+      Handler: index.generateInvestorInformationReport
+      CodeUri: dist/lambdas/generate-investor-information-report
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/report/investors
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  GetS3FilesList:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetS3FilesList
+      Handler: index.getS3FilesList
+      CodeUri: dist/lambdas/get-s3-files-list
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/s3/files
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  GenerateGetPresignedUrl:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GenerateGetPresignedUrl
+      Handler: index.generateGetPresignedUrl
+      CodeUri: dist/lambdas/generate-get-presigned-url
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/s3/download
+            Method: get
+            RestApiId: !Ref RestApi
+
+  BatchGenerateInvestorReport:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-BatchGenerateInvestorReport
+      Handler: index.batchGenerateInvestorReport
+      CodeUri: dist/lambdas/batch-generate-investor-report
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        BfsBatcherCron:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 7 * * ? *)
+
+  DeleteInactiveAccounts:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-DeleteInactiveAccounts
+      Handler: index.deleteInactiveAccounts
+      CodeUri: dist/lambdas/delete-inactive-accounts
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /bond/accounts/delete-inactive
+            Method: post
+            RestApiId: !Ref RestApi
+
+  GetBondUsersStats:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GetBondUsersStats
+      Handler: index.getBondUsersStats
+      CodeUri: dist/lambdas/get-bond-users-stats
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/users/stats
+            Method: GET
+            RestApiId: !Ref RestApi
+
+  GenerateTwoFaSecret:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-GenerateTwoFaSecret
+      Handler: index.generateTwoFaSecret
+      CodeUri: dist/lambdas/generate-two-fa-secret
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/account/generate-two-fa-secret
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  Logout:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-Logout
+      Handler: index.logout
+      CodeUri: dist/lambdas/logout
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/logout
+            Method: POST
+            RestApiId: !Ref RestApi
+  # TODO: Add new APIs here
+
+  CreateTransactionOtp:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CreateTransactionOtp
+      Handler: index.createTransactionOtp
+      CodeUri: dist/lambdas/create-transaction-otp
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /txn/{userType}/{transactionType}/otp
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  CheckTransactionOtp:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CheckTransactionOtp
+      Handler: index.checkTransactionOtp
+      CodeUri: dist/lambdas/check-transaction-otp
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /txn/{userType}/{transactionType}/check-otp
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  BondUserInfoEditRequestMaker:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-BondUserInfoEditRequestMaker
+      Handler: index.adminEditBondUserRequestMaker
+      CodeUri: dist/lambdas/admin-bond-user-edit-maker
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/bond-user/edit
+            Method: post
+            RestApiId: !Ref RestApi
+
+  BondUserInfoEditRequestChecker:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-BondUserInfoEditRequestChecker
+      Handler: index.adminEditBondUserRequestChecker
+      CodeUri: dist/lambdas/admin-bond-user-edit-checker
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/bond-user/check
+            Method: post
+            RestApiId: !Ref RestApi
+
+  AdminGetBondUserEditRequests:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminGetBondUserEditRequests
+      Handler: index.adminGetBondUserEditRequests
+      CodeUri: dist/lambdas/admin-get-bond-user-edit-requests
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/edit-requests
+            Method: get
+            RestApiId: !Ref RestApi
+
+  SystemSyncUserData:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-SystemSyncUserData
+      Handler: index.systemSyncUserData
+      CodeUri: dist/lambdas/system-sync-user-data
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/sync-user-data
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  SystemGenerateBondUserRegion:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-SystemGenerateBondUserRegion
+      Handler: index.systemGenerateBondUserRegion
+      CodeUri: dist/lambdas/system-generate-bond-user-region
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+
+  AdminDeleteUsers:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminDeleteUsers
+      Handler: index.adminDeleteUsers
+      CodeUri: dist/lambdas/admin-delete-users
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/users/delete
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  AdminResetAdminLockouts:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminResetAdminLockouts
+      Handler: index.adminResetAdminLockouts
+      CodeUri: dist/lambdas/admin-reset-admin-lockouts
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/reset
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  CreateTwoFaBondUser:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-CreateTwoFaBondUser
+      Handler: index.createTwoFaBondUser
+      CodeUri: dist/lambdas/create-2fa-bond-user
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /user/bond/twofa/create
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  AdminGetAdmins:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminGetAdmins
+      Handler: index.adminGetAdmins
+      CodeUri: dist/lambdas/admin-get-admins
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /admins
+            Method: GET
+            RestApiId: !Ref RestApi
+  AdminGetAdminRoles:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminGetAdminRoles
+      Handler: index.adminGetAdminRoles
+      CodeUri: dist/lambdas/admin-get-admin-roles
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /admin/admin-roles
+            Method: GET
+            RestApiId: !Ref RestApi
+  AdminManageAdmins:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminManageAdmins
+      Handler: index.adminManageAdmins
+      CodeUri: dist/lambdas/admin-manage-admins
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /admin/manage-admins
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  SystemFixUserContacts:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-SystemFixUserContacts
+      Handler: index.systemFixUserContacts
+      CodeUri: dist/lambdas/system-fix-user-contacts
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+
+  BulkApproveKyc:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-BulkApproveKyc
+      Handler: index.bulkApproveKyc
+      CodeUri: dist/lambdas/bulk-approve-kyc
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/kyc/approve/bulk
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  AdminCreateManageAdminRequest:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminCreateManageAdminRequest
+      Handler: index.adminCreateManageAdminRequest
+      CodeUri: dist/lambdas/admin-create-manage-admin-request
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/admin/manage-request
+            Method: POST
+            RestApiId: !Ref RestApi
+
+  AdminApproveRejectManageAdminRequest:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminApproveRejectManageAdminRequest
+      Handler: index.adminApproveRejectManageAdminRequest
+      CodeUri: dist/lambdas/admin-approve-reject-manage-admin-request
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/manage-requests/{action}
+            Method: PUT
+            RestApiId: !Ref RestApi
+
+  AdminGetManageAdminRequest:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Stage}-${ServiceName}-AdminGetManageAdminRequest
+      Handler: index.adminGetManageAdminRequest
+      CodeUri: dist/lambdas/admin-get-manage-admin-requests
+      Layers:
+        - !Ref DepLayer
+      Role: !GetAtt ServiceRole.Arn
+      Events:
+        Event1:
+          Type: Api
+          Properties:
+            Path: /{type}/{group}/manage-requests
+            Method: GET
+            RestApiId: !Ref RestApi
