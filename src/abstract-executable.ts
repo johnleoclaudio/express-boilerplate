@@ -1,13 +1,14 @@
 import { injectable } from 'inversify';
+import { ArraySchema, ObjectSchema } from 'joi';
 import Executable from './interfaces/executable';
 import JoiError from './utils/joi-error';
 
 @injectable()
 export default abstract class AbstractExecutable<IParams, IResponse>
   implements Executable<IParams, IResponse> {
-  protected schema;
+  protected schema: ArraySchema | ObjectSchema;
 
-  abstract run(params: IParams, opts: any);
+  abstract run(params: IParams, opts: any): IResponse;
 
   execute(params: IParams, opts?: any) {
     const joiError = new JoiError(this.schema, params);
